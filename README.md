@@ -1,6 +1,14 @@
 # asoboon-stamp-rally
 
-ASOBooN NFC スタンプラリー — Cloudflare Pages (フロントエンド) + Google Apps Script (API) 構成
+ASOBooN NFC スタンプラリー — **無料・最小構成**
+
+| レイヤー | 使用サービス | 料金 |
+|---|---|---|
+| フロントエンド | **GitHub Pages** | 無料 |
+| API | **Google Apps Script** (Web アプリ) | 無料 |
+| DB | **Google スプレッドシート** | 無料 |
+
+> Cloudflare・GitHub Actions・ビルドツール は一切使いません。
 
 ---
 
@@ -8,108 +16,127 @@ ASOBooN NFC スタンプラリー — Cloudflare Pages (フロントエンド) +
 
 ```
 asoboon-stamp-rally/
+├── index.html          ← 本番フロントエンド本体（GitHub Pages root 公開）
 ├── frontend/
-│   └── index.html        # Cloudflare Pages で配信するフロントエンド (ビルド不要)
+│   └── index.html      ← index.html と同一内容（参照用）
 ├── gas/
-│   ├── Config.gs         # スポット定義・定数
-│   ├── Code.gs           # API ロジック (stamp / getStamps)
-│   └── appsscript.json   # GAS マニフェスト (ランタイム V8 / スコープ)
+│   ├── Config.gs       ← スポット定義・定数
+│   ├── Code.gs         ← API ロジック
+│   └── appsscript.json ← GAS マニフェスト
 └── README.md
 ```
 
 ### データフロー
 
 ```
-NFC タグスキャン
-  └─▶ LIFF URL (?spot=spot_XX)
-        └─▶ frontend/index.html (Cloudflare Pages)
-              ├─ liff.init() → idToken または userId 取得
-              └─▶ POST GAS API  { action, spotId, idToken|userId }
-                    ├─ idToken → LINE API で検証 → userId 取得
-                    ├─ userId → HMAC-SHA256 ハッシュ → userKey
-                    ├─ stamps シートに保存
-                    └─▶ { success, stamps[], completed, alreadyStamped }
-                          └─▶ フロントエンドに反映
+NFC タグ (miniapp.line.me)
+  └─▶ LIFF 起動 → index.html (GitHub Pages)
+        ├─ liff.init() / liff.getIDToken() / liff.getContext()
+        └─▶ POST GAS API  { action, spotId, idToken|lineUserId, ... }
+              ├─ idToken → LINE API 検証 → sub (userId) 取得
+              ├─ userId → SHA-256(type+value+visitDate+SECRET) → userKey
+              ├─ stamps シートに保存 (userKey のみ保存、userId は保存しない)
+              └─▶ { ok, stampList, stampedCount, completed, ... }
+                    └─▶ フロントエンドに反映
 ```
 
 ---
 
-## デプロイ手順
+## 1. GitHub Pages 設定
 
-### 1. Google スプレッドシートの準備
+1. リポジトリ → **Settings** → **Pages**
+2. **Source**: Deploy from a branch
+3. **Branch**: `main` / **Folder**: `/ (root)`
+4. 「Save」をクリック
 
-1. [Google スプレッドシート](https://sheets.google.com) で新規シートを作成
-2. URL の `/d/XXXX/edit` 部分をコピーしておく（スプレッドシート ID）
-
----
-
-### 2. GAS のデプロイ
-
-1. [Google Apps Script](https://script.google.com) でプロジェクトを新規作成
-2. 左サイドバー「＋ ファイル」で以下を追加：
-   - `Config.gs` → `gas/Config.gs` の内容を貼り付け
-   - `Code.gs` (デフォルト) → `gas/Code.gs` の内容を貼り付け
-3. 「プロジェクトの設定」→「スクリプト プロパティ」に以下を追加：
-
-   | キー | 値 | 備考 |
-   |---|---|---|
-   | `ASOBOON_SPREADSHEET_ID` | スプレッドシート ID | 手順1で取得したもの |
-   | `ASOBOON_SECRET_KEY` | 任意のランダム文字列 (32 文字以上推奨) | userId ハッシュ化に使用 |
-   | `ASOBOON_LIFF_ID` | `2009888671-57TOefc3` | LINE チャネル ID の解決に使用 |
-   | `LINE_CHANNEL_ID` | LINE チャネル ID (任意) | 未設定なら LIFF ID のハイフン前を自動使用 |
-
-4. エディタ上部の関数セレクタで **`setup`** を選択して「▶ 実行」
-   - 初回のみ OAuth 権限確認が表示されます → 許可してください
-   - スプレッドシートに 4 シート (spots / stamps / claims / settings) が作成されます
-
-5. 「デプロイ」→「新しいデプロイ」
-   - 種類: **ウェブアプリ**
-   - 次のユーザーとして実行: **自分**
-   - アクセスできるユーザー: **全員**
-   - 「デプロイ」をクリック → ウェブアプリ URL をコピー
-
-6. `frontend/index.html` の `GAS_URL` が以下であることを確認（既に設定済み）：
-   ```
-   https://script.google.com/macros/s/AKfycbxILMUKf0jUEXi_t3quHWUuY0QwP8damcvnKUFY8OwFXoqcN7rfdEhi3vh2Yf8bzLiQLQ/exec
-   ```
-   GAS を再デプロイして URL が変わった場合は `index.html` の `GAS_URL` を更新してください。
+公開 URL:
+```
+https://asoboon.github.io/asoboon-stamp-rally/
+```
 
 ---
 
-### 3. Cloudflare Pages のデプロイ
+## 2. LINE Developers 設定
 
-1. [Cloudflare Pages](https://pages.cloudflare.com) にログイン
-2. 「Create a project」→「Connect to Git」→ このリポジトリ (`asoboon/asoboon-stamp-rally`) を選択
-3. ビルド設定：
+1. [LINE Developers Console](https://developers.line.biz/console/) → 該当チャネル → **LIFF タブ**
+2. LIFF ID `2009888671-57TOefc3` を選択して以下を設定：
 
    | 項目 | 値 |
    |---|---|
-   | Framework preset | `None` |
-   | Build command | (空欄) |
-   | Build output directory | `frontend` |
-   | Root directory | (空欄) |
+   | エンドポイント URL | `https://asoboon.github.io/asoboon-stamp-rally/` |
+   | Scope | `openid`, `profile` |
+   | サイズ | `Full` |
+   | Scan QR | `On` |
 
-4. 「Save and Deploy」→ デプロイ完了後に Pages URL (`https://xxxx.pages.dev`) をコピー
-
----
-
-### 4. LINE Developers のエンドポイント URL 変更
-
-1. [LINE Developers Console](https://developers.line.biz/console/) にログイン
-2. 該当チャネル → 「LIFF」タブ → LIFF ID `2009888671-57TOefc3` を選択
-3. 「エンドポイント URL」を Cloudflare Pages の URL に変更：
-   ```
-   https://xxxx.pages.dev
-   ```
-4. 「更新」をクリック
+3. 「更新」をクリック
 
 ---
 
-## NFC タグ URL
+## 3. GAS 設定
 
-各 NFC タグには以下の URL を書き込んでください：
+### 3-1. スクリプト作成
 
-| スポット | 名前 | URL |
+1. [Google Apps Script](https://script.google.com) でプロジェクトを新規作成
+2. ファイルを追加・編集：
+
+   | GAS ファイル名 | 元ファイル |
+   |---|---|
+   | `Code.gs` (デフォルト) | `gas/Code.gs` |
+   | `Config.gs` (追加) | `gas/Config.gs` |
+
+   > `appsscript.json` は「プロジェクトの設定」→「appsscript.json マニフェストファイルをエディタで表示」で編集
+
+### 3-2. スクリプトプロパティ設定
+
+「プロジェクトの設定」→「スクリプト プロパティ」に追加：
+
+| キー | 値 | 備考 |
+|---|---|---|
+| `ASOBOON_SPREADSHEET_ID` | スプレッドシート ID | 後述の手順で取得 |
+| `ASOBOON_SECRET_KEY` | ランダム文字列 (32 文字以上) | userKey ハッシュ化用。**コードに書かない** |
+| `ASOBOON_LIFF_ID` | `2009888671-57TOefc3` | チャネル ID 解決に使用 |
+| `LINE_CHANNEL_ID` | LINE チャネル ID (任意) | 未設定なら LIFF ID のハイフン前を自動使用 |
+
+### 3-3. スプレッドシート準備
+
+1. [Google スプレッドシート](https://sheets.google.com) で新規ファイルを作成
+2. URL の `/d/XXXXXXXX/edit` 部分 (スプレッドシート ID) をコピー
+3. `ASOBOON_SPREADSHEET_ID` にセット
+
+### 3-4. setupPrototype 実行
+
+GAS エディタで関数セレクタから **`setupPrototype`** を選択して「▶ 実行」
+
+- 初回のみ OAuth 権限確認 → 許可
+- `spots` / `stamps` / `claims` / `settings` の 4 シートが作成される
+- 毎日 4:00 (JST) に自動リセットするトリガーが設定される
+
+### 3-5. Web アプリとしてデプロイ
+
+「デプロイ」→「新しいデプロイ」→
+
+| 項目 | 値 |
+|---|---|
+| 種類 | ウェブアプリ |
+| 次のユーザーとして実行 | **自分** |
+| アクセスできるユーザー | **全員** |
+
+デプロイ後に表示される **ウェブアプリ URL** を確認し、`index.html` の `GAS_URL` と一致していることを確かめてください。
+
+```js
+// index.html (設定済み)
+var GAS_URL = 'https://script.google.com/macros/s/AKfycbxILMUKf0jUEXi_t3quHWUuY0QwP8damcvnKUFY8OwFXoqcN7rfdEhi3vh2Yf8bzLiQLQ/exec';
+```
+
+> GAS を再デプロイして URL が変わった場合は `index.html` の `GAS_URL` を更新してください。
+
+---
+
+## 4. NFC タグ URL
+
+各 NFC タグに書き込む URL：
+
+| スポット | 名前 | NFC タグ URL |
 |---|---|---|
 | spot_01 | みまもり | `https://miniapp.line.me/2009888671-57TOefc3?spot=spot_01` |
 | spot_02 | 飲食ルール | `https://miniapp.line.me/2009888671-57TOefc3?spot=spot_02` |
@@ -118,61 +145,48 @@ NFC タグスキャン
 
 ---
 
-## 検証手順
+## 5. 検証手順
 
-### 動作確認ステップ
+1. **GitHub Pages 確認**
+   `https://asoboon.github.io/asoboon-stamp-rally/` をブラウザで開く
+   → ローディング → (LINE 未ログインなら) LINE ログイン画面が表示される
 
-1. **GAS 単体確認**（curl で直接叩く）
+2. **GAS health check**
+   ```
+   https://<GAS_URL>?action=health
+   ```
+   → `{"ok":true,"status":"healthy","visitDate":"..."}` が返る
+
+3. **curl テスト**
    ```bash
-   curl -L -X POST "https://script.google.com/macros/s/.../exec" \
-     -d '{"action":"stamp","userId":"Utest123","spotId":"spot_01"}'
+   curl -L -X POST "<GAS_URL>" \
+     -H "Content-Type: text/plain;charset=utf-8" \
+     -d '{"action":"stamp","spotId":"spot_01","lineUserId":"Utest00000000000000000001","idToken":"","timestamp":"2026-04-26T00:00:00.000Z"}'
    ```
-   期待レスポンス：
-   ```json
-   {"success":true,"stamps":[{"spotId":"spot_01","stampedAt":"..."}],"completed":false,"alreadyStamped":false,"currentSpot":"spot_01"}
-   ```
+   → `{"ok":true,"stampedCount":1,...}` が返る
+   → スプレッドシートの `stamps` シートに行が追加される
 
-2. **フロントエンド単体確認**
-   - ブラウザで `https://xxxx.pages.dev?spot=spot_01` を開く
-   - LIFF 未対応ブラウザでは LINE ログイン画面にリダイレクトされることを確認
+4. **LINE ミニアプリ確認**
+   LINE アプリで `https://miniapp.line.me/2009888671-57TOefc3?spot=spot_01` を開く
+   → スタンプ 1/4 が表示される
 
-3. **LINE ミニアプリ確認**
-   - LINE アプリで `https://miniapp.line.me/2009888671-57TOefc3?spot=spot_01` を開く
-   - スタンプカードが表示され、spot_01 にスタンプが入ることを確認
-
-4. **コンプリート確認**
-   - 4 スポットすべてスタンプ後、コンプリート画面とコンフェッティアニメーションを確認
-   - スプレッドシートの `claims` シートに行が追加されることを確認
+5. **コンプリート確認**
+   4 スポットすべてスキャン後、コンプリート画面とコンフェッティが表示される
+   → `claims` シートに行が追加される
 
 ---
 
-## 成功ログ
+## 6. 失敗時の分岐
 
-GAS の「実行数」に以下が記録されれば正常：
-
-```
-setup() 完了                          # 初回セットアップ
-シート作成: spots                     # 初回のみ
-```
-
-スプレッドシート確認ポイント：
-
-| シート | 確認内容 |
-|---|---|
-| `spots` | 4 行のスポットデータが存在する |
-| `stamps` | スキャンのたびに行が追加される (userKey はハッシュ値) |
-| `claims` | コンプリート時に行が追加される |
-
----
-
-## 失敗時の分岐
-
-| 症状 | 原因 | 対処 |
+| エラーコード / 症状 | 原因 | 対処 |
 |---|---|---|
-| `LIFF_INIT_TIMEOUT` | GAS HTML Service でホストしていた | Cloudflare Pages で配信することで解消済み |
-| `ASOBOON_SPREADSHEET_ID が設定されていません。` | スクリプトプロパティ未設定 | GAS のプロジェクト設定でプロパティを追加 |
-| `idToken 検証失敗` | LINE_CHANNEL_ID ミスマッチ | `LINE_CHANNEL_ID` を正しいチャネル ID に修正、または削除して自動解決に任せる |
-| CORS エラー (DevTools) | GAS URL 誤りまたはデプロイ未反映 | GAS を再デプロイし `GAS_URL` を最新に更新 |
-| スタンプが保存されない | `setup()` 未実行でシートがない | GAS で `setup()` を手動実行 |
-| コンプリート後も完了画面が出ない | `stamps` シートに重複行があり count が不正 | スプレッドシートで対象 userKey の行を確認 |
-| LINE アプリ外で開いてもスタンプされない | LIFF の仕様 | LINE アプリから開くよう案内、スタッフに LINE アプリ経由を徹底 |
+| `LIFF_INIT_TIMEOUT` | LIFF エンドポイント URL が未設定または誤り | LINE Developers でエンドポイント URL を `https://asoboon.github.io/asoboon-stamp-rally/` に設定 |
+| `LINE_USER_ID_EMPTY` | idToken・lineUserId ともに取得できない | LINE アプリ内から開く。Scope に `openid`, `profile` が設定されているか確認 |
+| `API_TIMEOUT` | GAS 側の処理が 12 秒を超えた | GAS のスプレッドシート操作の遅延。スプレッドシート ID が正しいか確認 |
+| `LINE_REQUIRED` | LIFF 外から開いた | LINE アプリ経由でアクセスするよう案内 |
+| `INVALID_SPOT` | spot パラメータが不正 | NFC タグの URL が `?spot=spot_0X` 形式か確認 |
+| `SAVE_FAILED` / `HTTP 5XX` | GAS 側エラー | GAS の「実行数」でスタックトレースを確認 |
+| `ASOBOON_SPREADSHEET_ID が設定されていません` | スクリプトプロパティ未設定 | GAS プロジェクト設定でプロパティを追加 |
+| `idToken 検証失敗` | LINE_CHANNEL_ID が誤り | LIFF ID のハイフン前の数字 = チャネル ID を確認 |
+| スタンプが保存されない | `setupPrototype` 未実行 | GAS で `setupPrototype` を手動実行 |
+| 翌日もスタンプが残る | 毎日リセットトリガーが未設定 | `installDailyResetTrigger` を再実行 |
